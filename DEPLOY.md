@@ -6,7 +6,6 @@
 - AgentCore Runtime / Memory / Code Interpreter / Guardrail 复用现有资源
 - IaC 全部 AWS CDK (Python)
 
-架构详见 [docs/architecture-cloud.md](docs/architecture-cloud.md)。
 
 ---
 

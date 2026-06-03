@@ -108,7 +108,6 @@ backend/                  # FastAPI REST endpoints (单图/多法域/批量/上�
 ui/                       # Vite + React + Tailwind 4 + shadcn-style dark dashboard
 scripts/                  # 一次性初始化脚本
 tests/                    # 单元测试 (24 passed)
-docs/                     # 客户方案文档 / runbook
 ```
 
 ## 测试
@@ -122,10 +121,10 @@ uv run pytest -v
 
 本项目并存两套审核编排，方便演讲现场对比：
 
-| 版本 | 入口 | Agent 数 | 低风险耗时 | 文档 |
-|---|---|---|---|---|
-| **v1 Full-Agent**（默认） | `src/ugc_moderation/pipeline.py` · Strands Graph | 6 | ~31.5s | [architecture-v1-full-agent.md](docs/architecture-v1-full-agent.md) |
-| **v2 Hybrid**（推荐生产） | `src/ugc_moderation/pipeline_hybrid.py` · 纯 Python + 2 Agent | 2（deep_review + decision_heavy） | ~10s | [architecture-v2-hybrid.md](docs/architecture-v2-hybrid.md) |
+| 版本 | 入口 | Agent 数 | 低风险耗时 |
+|---|---|---|---|
+| **v1 Full-Agent**（默认） | `src/ugc_moderation/pipeline.py` · Strands Graph | 6 | ~31.5s |
+| **v2 Hybrid**（推荐生产） | `src/ugc_moderation/pipeline_hybrid.py` · 纯 Python + 2 Agent | 2（deep_review + decision_heavy） | ~10s |
 
 切换方式：
 
@@ -135,9 +134,3 @@ uv run uvicorn backend.api:app --reload --port 8000
 ```
 
 两版 Report schema、API、前端、AgentCore Runtime 入口完全一致。AgentCore（Memory / Code Interpreter / Runtime / Gateway）四大组件在两版中使用方式完全相同。
-
-两版对比见 [docs/comparison.md](docs/comparison.md)。
-
-## 下一步
-
-见 `docs/solution.md` 客户方案文档、`docs/runbook.md` 部署排坑清单。
