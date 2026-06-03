@@ -116,21 +116,3 @@ tests/                    # 单元测试 (24 passed)
 uv run pytest -v
 # 24 passed: 策略脚本差异化 + Graph 条件边 AND 语义 + _parse_last_json_blob
 ```
-
-## 两个 Pipeline 版本（PIPELINE_MODE 切换）
-
-本项目并存两套审核编排，方便演讲现场对比：
-
-| 版本 | 入口 | Agent 数 | 低风险耗时 |
-|---|---|---|---|
-| **v1 Full-Agent**（默认） | `src/ugc_moderation/pipeline.py` · Strands Graph | 6 | ~31.5s |
-| **v2 Hybrid**（推荐生产） | `src/ugc_moderation/pipeline_hybrid.py` · 纯 Python + 2 Agent | 2（deep_review + decision_heavy） | ~10s |
-
-切换方式：
-
-```bash
-export PIPELINE_MODE=hybrid   # 或 agent（默认）
-uv run uvicorn backend.api:app --reload --port 8000
-```
-
-两版 Report schema、API、前端、AgentCore Runtime 入口完全一致。AgentCore（Memory / Code Interpreter / Runtime / Gateway）四大组件在两版中使用方式完全相同。
