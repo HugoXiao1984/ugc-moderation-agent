@@ -1,0 +1,41 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Build artifacts
+dist/
+build/
+
+# Local env / credentials
+.env
+.env.*
+!.env.example
+.aws/
+
+# AgentCore toolkit local state (contains account ID + ARNs)
+.agentcore/
+.bedrock_agentcore/
+.bedrock_agentcore.yaml
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Test fixtures (large media)
+tests/fixtures/*.jpg
+tests/fixtures/*.png
+streamlit_app/assets/benchmark/
+
+# Local sample videos
+*.mp4
+
+# IDE / agent scratch
+4dc0ae5e-*/
+55bb101e-*/
+7386d4bc-*/
+ebe4b060-*/

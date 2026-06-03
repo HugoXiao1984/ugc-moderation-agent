@@ -1,0 +1,7 @@
+# Subset used by AgentCore Runtime container image (no UI deps).
+strands-agents>=1.0.0
+bedrock-agentcore>=0.1.0
+boto3>=1.34.0
+pydantic>=2.6.0
+python-dotenv>=1.0.0
+Pillow>=10.0.0
