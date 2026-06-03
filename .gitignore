@@ -10,6 +10,9 @@ __pycache__/
 dist/
 build/
 
+# Internal docs (kept locally only, not published)
+docs/
+
 # Local env / credentials
 .env
 .env.*
