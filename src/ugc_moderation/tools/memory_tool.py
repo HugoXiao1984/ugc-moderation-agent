@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -125,12 +126,41 @@ def record_misjudgment(
     return {"ok": True, "case_id": case_id, "session_id": sid}
 
 
+_DECISION = r"(allow|deny|human_review)"
+
+
+def _parse_corrected_decision(text: str) -> str | None:
+    """Best-effort recovery of the corrected decision from free text.
+
+    The semantic memory strategy rewrites the stored event into a new
+    natural-language sentence and drops our `<!--metadata-->` sidecar, so we
+    can't rely on the JSON comment after extraction. Both the original CN
+    narrative ("运营更正为 allow") and the English rewrite produced by the
+    strategy ("operations corrected it to allow", "corrected by operations to
+    deny") are handled here.
+    """
+    t = text.lower()
+    # English: "corrected it to allow" / "corrected by operations to deny" / "corrected to allow"
+    m = re.search(rf"correct(?:ed|ion|s)?\b[^.;]*?\bto\s+{_DECISION}", t)
+    if m:
+        return m.group(1)
+    # Chinese: "更正为 allow" / "运营更正为 deny"
+    m = re.search(rf"更正为\s*{_DECISION}", t)
+    if m:
+        return m.group(1)
+    return None
+
+
 def _extract_metadata(content: str) -> dict[str, Any]:
+    # Fast path: raw (non-extracted) reads still carry the JSON sidecar.
     marker = "<!--metadata:"
-    if marker not in content:
-        return {}
-    try:
-        raw = content.split(marker, 1)[1].rsplit("-->", 1)[0]
-        return json.loads(raw)
-    except Exception:                            # noqa: BLE001
-        return {}
+    if marker in content:
+        try:
+            raw = content.split(marker, 1)[1].rsplit("-->", 1)[0]
+            return json.loads(raw)
+        except Exception:                        # noqa: BLE001
+            pass
+    # Fallback: recover the corrected decision from the (possibly rewritten)
+    # narrative so semantic-extracted records still drive threshold tuning.
+    corrected = _parse_corrected_decision(content)
+    return {"corrected_decision": corrected} if corrected else {}

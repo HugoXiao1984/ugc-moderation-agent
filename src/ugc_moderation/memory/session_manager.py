@@ -41,9 +41,13 @@ def build_session_manager(actor_id: str, session_id: str, jurisdiction: str = "C
         yield None
         return
 
+    # Semantic-strategy scores for similar cases sit ~0.35-0.45 (the strategy
+    # rewrites stored text, lowering cosine similarity), so a 0.7-0.75 gate
+    # filters out every real hit. Align with MEMORY_RELEVANCE_GATE.
+    gate = settings.memory_relevance_gate
     retrieval: dict[str, RetrievalConfig] = {
-        misjudgment_namespace(actor_id, jurisdiction): RetrievalConfig(top_k=3, relevance_score=0.75),
-        operator_prefs_namespace(actor_id): RetrievalConfig(top_k=2, relevance_score=0.7),
+        misjudgment_namespace(actor_id, jurisdiction): RetrievalConfig(top_k=3, relevance_score=gate),
+        operator_prefs_namespace(actor_id): RetrievalConfig(top_k=2, relevance_score=gate),
     }
     config = AgentCoreMemoryConfig(
         memory_id=settings.memory_id,

@@ -44,6 +44,10 @@ class Settings:
     demo_tenant_id: str = "demo-tenant"
     demo_bucket: str = "ugc-moderation-demo"
     default_confidence_threshold: float = 75.0
+    # Min relevance score for a recalled misjudgment to drive threshold tuning.
+    # Semantic-strategy scores for similar cases sit ~0.35-0.45, so the old
+    # hard-coded 0.75 never matched.
+    memory_relevance_gate: float = 0.40
     client_mode: str = "local"
     agent_runtime_arn: str | None = None
     # Pipeline engine: "agent" = original full-Graph (6 Agents) / "hybrid" = pipeline_hybrid
@@ -89,6 +93,7 @@ def get_settings() -> Settings:
         demo_tenant_id=os.getenv("DEMO_TENANT_ID", "demo-tenant"),
         demo_bucket=os.getenv("DEMO_BUCKET", "ugc-moderation-demo"),
         default_confidence_threshold=float(os.getenv("DEFAULT_CONFIDENCE_THRESHOLD", "75")),
+        memory_relevance_gate=float(os.getenv("MEMORY_RELEVANCE_GATE", "0.40")),
         client_mode=os.getenv("CLIENT_MODE", "local"),
         agent_runtime_arn=os.getenv("AGENT_RUNTIME_ARN") or None,
         pipeline_mode=(os.getenv("PIPELINE_MODE", "agent") or "agent").lower(),

@@ -310,22 +310,43 @@ def memory_recent(limit: int = 20) -> dict[str, Any]:
     s = get_settings()
     if not s.memory_id:
         return {"records": []}
+    # list_memory_records returns records oldest-first and ignores ordering, so
+    # a single page of `limit` items only ever surfaces the old seed records.
+    # Paginate to gather a bounded superset, sort by createdAt descending, then
+    # truncate — so freshly recorded misjudgments show up at the top.
+    _MAX_SCAN = 500
+    raw: list[dict[str, Any]] = []
+    next_token: str | None = None
     try:
-        resp = _mem_client().list_memory_records(
-            memoryId=s.memory_id,
-            namespace=f"/misjudgments/{s.demo_tenant_id}",
-            maxResults=limit,
-        )
+        while len(raw) < _MAX_SCAN:
+            kwargs: dict[str, Any] = {
+                "memoryId": s.memory_id,
+                "namespace": f"/misjudgments/{s.demo_tenant_id}",
+                "maxResults": 100,
+            }
+            if next_token:
+                kwargs["nextToken"] = next_token
+            resp = _mem_client().list_memory_records(**kwargs)
+            raw.extend(resp.get("memoryRecordSummaries", []))
+            next_token = resp.get("nextToken")
+            if not next_token:
+                break
     except Exception as exc:           # noqa: BLE001
         raise HTTPException(500, f"Memory list failed: {exc}")
-    records = []
-    for r in resp.get("memoryRecordSummaries", []):
-        content = (r.get("content") or {}).get("text", "")
-        records.append({
+
+    def _created_iso(r: dict[str, Any]) -> str:
+        v = r.get("createdAt")
+        return v.isoformat() if hasattr(v, "isoformat") else str(v or "")
+
+    raw.sort(key=_created_iso, reverse=True)
+    records = [
+        {
             "memory_id": r.get("memoryRecordId"),
-            "content": content,
-            "created_at": (r.get("createdAt") or "").isoformat() if hasattr(r.get("createdAt"), "isoformat") else str(r.get("createdAt", "")),
-        })
+            "content": (r.get("content") or {}).get("text", ""),
+            "created_at": _created_iso(r),
+        }
+        for r in raw[:limit]
+    ]
     return {"records": records}
 
 

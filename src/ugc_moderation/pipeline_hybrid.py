@@ -65,6 +65,113 @@ HIGH_RISK_LABEL_NAMES = {
     "Hate Symbols",
 }
 
+# Labels that a Memory recall is allowed to override (borderline / contextual
+# risk — e.g. gym/yoga/swimwear content tagged "Suggestive" or "Non-Explicit
+# Nudity"). The hard red-lines below are deliberately *excluded*: an operator
+# misjudgment on those still demands real human review, so recall never
+# auto-flips them. This is what keeps a 92% Explicit Nudity image DENY while
+# flipping a 96% Non-Explicit-Nudity bodybuilder image to ALLOW.
+#
+# Note: "Non-Explicit Nudity of Intimate parts and Kissing" stays in
+# HIGH_RISK_LABEL_NAMES (so it still triggers deep review) *and* lives here
+# (so memory may flip it) — the two sets serve different purposes.
+_HARD_REDLINE_LABELS = {
+    "Explicit Nudity",
+    "Graphic Violence",
+    "Visually Disturbing",
+    "Hate Symbols",
+    "Violence",
+}
+_OVERRIDABLE_LABELS = {
+    "Suggestive",
+    "Non-Explicit Nudity of Intimate parts and Kissing",
+    "Non-Explicit Nudity",
+    "Exposed Male Nipple",
+    "Female Swimwear Or Underwear",
+    "Male Swimwear Or Underwear",
+    "Swimwear or Underwear",
+    "Revealing Clothes",
+    "Alcohol",
+    "Alcoholic Beverages",
+    "Gambling",
+    "Smoking",
+    "Drugs & Tobacco Paraphernalia",
+}
+
+
+def _apply_memory_override(
+    policy: dict[str, Any],
+    orch: OrchestratorOutput,
+    signals: dict[str, Any],
+) -> dict[str, Any]:
+    """Let a strong Memory recall flip a borderline ruling.
+
+    This is the demonstrable payoff of the 'misjudgment → learn → readjust'
+    loop. The orchestrator has already moved `effective_threshold` based on
+    recall; here we turn that into an actual decision change:
+
+      - Relax (threshold raised, e.g. 75→85 after recalling an
+        allow-misjudgment): if the content was denied *only* on overridable
+        labels (no hard red-line), flip deny → allow.
+      - Tighten (threshold lowered, e.g. 75→65 after a deny-misjudgment): if
+        the content was allowed but an overridable label is elevated, flip
+        allow → human_review.
+
+    Keyword/guardrail denies and any hard red-line label are never touched.
+    Returns the (possibly replaced) policy dict; adds a `memory_override` key
+    when a flip occurred.
+    """
+    default = get_settings().default_confidence_threshold
+    eff = orch.effective_threshold
+    decision = policy.get("decision")
+
+    # --- relax: deny → allow ---
+    if eff > default + 1 and decision == "deny":
+        # On a label-threshold deny, cn/eu/us.py set thresholds_used to exactly
+        # the violated labels; a red-line keyword deny sets {"red_line": ...}.
+        violated = [n for n in (policy.get("thresholds_used") or {}) if n != "red_line"]
+        if violated and all(v in _OVERRIDABLE_LABELS for v in violated):
+            note = (
+                f"命中相似历史误判记忆（运营曾将同类内容更正为 allow），"
+                f"且违规仅来自边缘标签 {violated}（非色情/血腥等硬红线），"
+                f"依记忆放宽阈值（{default:g}→{eff:g}）改判为 allow。"
+            )
+            orch.memory_rationale.append(f"【记忆改判】deny → allow：{note}")
+            return {
+                **policy,
+                "decision": "allow",
+                "reasoning_cn": note,
+                "violated_rules": [],
+                "confidence": 0.8,
+                "escalation_needed": False,
+                "memory_override": "deny->allow",
+            }
+
+    # --- tighten: allow → human_review ---
+    if eff < default - 1 and decision == "allow":
+        max_conf = float(signals.get("max_confidence") or 0.0)
+        present = [
+            l.get("Name") for l in (signals.get("labels") or [])
+            if l.get("Name") in _OVERRIDABLE_LABELS
+        ]
+        if present and max_conf >= eff - 5:
+            note = (
+                f"命中相似历史漏判记忆（运营曾将同类内容更正为 deny），"
+                f"边缘标签 {present} 置信度偏高（max={max_conf:g}），"
+                f"依记忆收紧阈值（{default:g}→{eff:g}）转人工复核。"
+            )
+            orch.memory_rationale.append(f"【记忆改判】allow → human_review：{note}")
+            return {
+                **policy,
+                "decision": "human_review",
+                "reasoning_cn": note,
+                "escalation_needed": True,
+                "confidence": 0.7,
+                "memory_override": "allow->human_review",
+            }
+
+    return policy
+
 
 # --------------------------------------------------------------------- steps
 
@@ -88,7 +195,25 @@ def _orchestrate(content_s3_uri: str, jurisdiction: str, actor: str) -> Orchestr
     threshold = default
     rationale: list[str] = []
 
-    top = next((h for h in hits if (h.get("relevance_score") or 0) >= 0.75), None)
+    # Semantic-strategy scores for genuinely similar cases land around
+    # 0.35-0.45 in practice (the strategy rewrites text, lowering cosine
+    # similarity), so a 0.75 gate never fires. Tune at MEMORY_RELEVANCE_GATE.
+    #
+    # The strategy also splits one misjudgment into several records — a
+    # "content description" record (no corrected decision) plus a separate
+    # "correction" record. The top-scored hit is often the description one,
+    # so pick the highest-scoring hit above the gate that actually carries a
+    # corrected decision, rather than blindly taking hits[0].
+    gate = get_settings().memory_relevance_gate
+    above_gate = sorted(
+        (h for h in hits if (h.get("relevance_score") or 0) >= gate),
+        key=lambda h: h.get("relevance_score") or 0,
+        reverse=True,
+    )
+    top = next(
+        (h for h in above_gate if (h.get("corrected_decision") or "").lower() in ("allow", "deny")),
+        None,
+    )
     if top:
         corrected = (top.get("corrected_decision") or "").lower()
         if corrected == "allow":
@@ -257,6 +382,7 @@ def _decision_light(
     """Fast path: no LLM. Call Code Interpreter and wrap the PolicyResult."""
     with span("step:decision_light.policy", jurisdiction=jurisdiction):
         policy = _run_policy(jurisdiction=jurisdiction, signals=signals)
+    policy = _apply_memory_override(policy, orch, signals)
     reasoning = (
         f"内容通过 {jurisdiction} 法域默认阈值（{orch.effective_threshold}），"
         f"未命中任何高风险标签。"
@@ -309,6 +435,10 @@ def _run_decision_heavy_agent(
     # Pre-compute PolicyResult — one deterministic Code Interpreter call.
     with span("step:decision_heavy.policy", jurisdiction=jurisdiction):
         policy = _run_policy(jurisdiction=jurisdiction, signals=signals)
+    # Apply the Memory-driven flip *before* handing the verdict to Sonnet, so
+    # the LLM synthesizes reasoning around the corrected decision rather than
+    # the raw policy ruling.
+    policy = _apply_memory_override(policy, orch, signals)
 
     # Give the Agent everything it needs as context; no tools to call.
     system = """你是 UGC 审核决策 Agent。根据我提供的 PolicyResult + 上游信号合成最终 JSON 输出。

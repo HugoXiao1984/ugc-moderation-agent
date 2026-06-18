@@ -14,10 +14,11 @@ _SYSTEM = """你是 UGC 审核编排 Agent。收到一条待审核内容后，�
 2. 调 `recall_similar_cases` 查询 AgentCore Memory 中相似的历史误判案例：
    - 查询语句用自然语言描述待审内容（不超过一句话）。
    - 法域参数使用任务中给出的 jurisdiction。
-3. 根据召回结果调整 effective_threshold：
+3. 根据召回结果调整 effective_threshold（相关度 relevance_score ≥ 0.40 即视为命中；
+   语义检索分数普遍偏低，0.40 已是强相关，不要用更高的门槛）：
    - 相似历史误判(corrected_decision=="allow") → 放宽到 85
    - 相似历史漏判(corrected_decision=="deny")  → 收紧到 65
-   - 未命中或相关度低 → 保持默认 75
+   - 未命中或相关度 < 0.40 → 保持默认 75
 4. 判断 modality (image|video|text|mixed)、prior_risk (low|medium|high)、是否需要文本护栏。
 
 最后输出**仅一段 JSON**（不要 Markdown/解释），字段严格遵守：
