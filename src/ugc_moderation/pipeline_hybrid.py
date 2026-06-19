@@ -418,12 +418,82 @@ def _run_decision_heavy_agent(
     signals: dict[str, Any],
     orch: OrchestratorOutput,
 ) -> DecisionOutput:
-    """Sonnet synthesizes a human-readable CN ruling.
+    """Heavy decision stage: deterministic policy + Sonnet synthesis.
 
-    We pre-compute the PolicyResult in Python (one direct Code Interpreter call)
-    and hand it to Sonnet as context. Sonnet does only one LLM round-trip — no
-    tool_use, no second call — just "turn this structured verdict into natural
-    Chinese reasoning." This drops a second CI call + an extra LLM round.
+    Two parts with very different runtime needs:
+      1. PolicyResult + Memory override — deterministic Python / Code Interpreter.
+         Always runs here (on ECS), close to the CI session and Memory.
+      2. Sonnet synthesis — one LLM round-trip turning the verdict into natural
+         Chinese reasoning. THIS is the step we offload to AgentCore Runtime
+         when remote is enabled, so exactly one agent genuinely runs in the
+         Runtime microVM while the rest of the pipeline stays fast on ECS.
+
+    The split keeps the Runtime agent S3-free and tool-free (just text in,
+    JSON out), which sidesteps the cross-region S3 IAM that broke the old
+    "whole pipeline in Runtime" approach.
+    """
+    # Pre-compute PolicyResult — one deterministic Code Interpreter call.
+    with span("step:decision_heavy.policy", jurisdiction=jurisdiction):
+        policy = _run_policy(jurisdiction=jurisdiction, signals=signals)
+    # Apply the Memory-driven flip *before* synthesis, so the reasoning is
+    # written around the corrected decision rather than the raw policy ruling.
+    policy = _apply_memory_override(policy, orch, signals)
+
+    # Remote-first: offload the Sonnet synthesis to AgentCore Runtime. On ANY
+    # failure fall back to running Sonnet in-process here — enabling remote can
+    # never regress the working demo.
+    from .runtime_client import remote_enabled, synthesize_decision_remote
+
+    if remote_enabled():
+        try:
+            with span("step:decision_heavy.runtime", jurisdiction=jurisdiction):
+                blob = synthesize_decision_remote(
+                    jurisdiction=jurisdiction,
+                    signals=signals,
+                    policy=policy,
+                    memory_rationale=orch.memory_rationale,
+                )
+            decision = _finalize_decision(blob, jurisdiction, policy, orch.memory_rationale)
+            # Mark provenance so the UI / trace can show this ran in the Runtime.
+            decision.execution_mode = "agentcore_runtime"
+            return decision
+        except Exception as exc:       # noqa: BLE001 - fall back on anything
+            log.warning(
+                "remote decision synthesis failed; falling back to local Sonnet",
+                extra={"ctx_err": str(exc)[:200]},
+            )
+
+    return synthesize_decision_local(jurisdiction, signals, policy, orch.memory_rationale)
+
+
+def synthesize_decision_local(
+    jurisdiction: str,
+    signals: dict[str, Any],
+    policy: dict[str, Any],
+    memory_rationale: list[str],
+) -> DecisionOutput:
+    """Sonnet synthesis + deterministic finalize, all in-process.
+
+    Used as the local fallback when remote Runtime is unavailable. The remote
+    path calls _synthesize_blob_local's twin inside the Runtime and runs
+    _finalize_decision here on ECS.
+    """
+    blob = _synthesize_blob_local(jurisdiction, signals, policy, memory_rationale)
+    return _finalize_decision(blob, jurisdiction, policy, memory_rationale)
+
+
+def _synthesize_blob_local(
+    jurisdiction: str,
+    signals: dict[str, Any],
+    policy: dict[str, Any],
+    memory_rationale: list[str],
+) -> dict[str, Any]:
+    """The single Sonnet round-trip: PolicyResult + signals → raw decision JSON.
+
+    Pure synthesis: no S3, no tools, one LLM call. This is the EXACT body that
+    runs inside the AgentCore Runtime microVM (app.py decision_synthesis task).
+    Returns the parsed JSON blob (may be empty if the model returned no JSON —
+    _finalize_decision handles that).
     """
     from strands import Agent
     from strands.models import BedrockModel
@@ -431,14 +501,6 @@ def _run_decision_heavy_agent(
     from .settings import get_settings as _s
 
     settings = _s()
-
-    # Pre-compute PolicyResult — one deterministic Code Interpreter call.
-    with span("step:decision_heavy.policy", jurisdiction=jurisdiction):
-        policy = _run_policy(jurisdiction=jurisdiction, signals=signals)
-    # Apply the Memory-driven flip *before* handing the verdict to Sonnet, so
-    # the LLM synthesizes reasoning around the corrected decision rather than
-    # the raw policy ruling.
-    policy = _apply_memory_override(policy, orch, signals)
 
     # Give the Agent everything it needs as context; no tools to call.
     system = """你是 UGC 审核决策 Agent。根据我提供的 PolicyResult + 上游信号合成最终 JSON 输出。
@@ -485,7 +547,7 @@ tags 要求：给 1~4 个细粒度标签（例："色情"/"血腥暴力"/"未成
             "jurisdiction": jurisdiction,
             "signals": signals,
             "policy_result": policy,
-            "memory_rationale": orch.memory_rationale,
+            "memory_rationale": memory_rationale,
         },
         ensure_ascii=False,
     )
@@ -493,10 +555,50 @@ tags 要求：给 1~4 个细粒度标签（例："色情"/"血腥暴力"/"未成
     with span("step:decision_heavy.agent", jurisdiction=jurisdiction):
         result = agent(prompt)
 
-    raw = str(getattr(result, "message", result) or "")
-    blob = _last_json(raw)
+    raw = _agent_result_text(result)
+    return _last_json(raw)
+
+
+def _agent_result_text(result: Any) -> str:
+    """Extract the assistant's text from a Strands AgentResult.
+
+    result.message is a dict {"role": "assistant", "content": [{"text": ...}]}.
+    str()-ing that whole dict yields a Python repr whose nested braces/quotes
+    confuse the JSON scanner, so pull the text out of the content blocks first.
+    Falls back to str(result) for any unexpected shape.
+    """
+    msg = getattr(result, "message", None)
+    if isinstance(msg, dict):
+        content = msg.get("content")
+        if isinstance(content, list):
+            parts = [
+                blk["text"]
+                for blk in content
+                if isinstance(blk, dict) and isinstance(blk.get("text"), str)
+            ]
+            if parts:
+                return "\n".join(parts)
+        if isinstance(content, str):
+            return content
+    if isinstance(msg, str):
+        return msg
+    return str(msg if msg is not None else result or "")
+
+
+def _finalize_decision(
+    blob: dict[str, Any],
+    jurisdiction: str,
+    policy: dict[str, Any],
+    memory_rationale: list[str],
+) -> DecisionOutput:
+    """Deterministic backfill + schema validation of a synthesized blob.
+
+    Runs on ECS regardless of whether the blob came from the local Sonnet call
+    or the remote Runtime — keeps PolicyResult as the source of truth for the
+    structured fields and tolerates a model that omitted/garbled JSON.
+    """
     if not blob:
-        log.warning("decision_heavy agent returned no JSON; using policy directly")
+        log.warning("decision synthesis returned no JSON; using policy directly")
         d = policy.get("decision", "human_review")
         return DecisionOutput(
             decision=d,
@@ -505,13 +607,13 @@ tags 要求：给 1~4 个细粒度标签（例："色情"/"血腥暴力"/"未成
             jurisdiction=jurisdiction,       # type: ignore[arg-type]
             execution_mode=policy.get("execution_mode", "local_fallback"),
             thresholds_used=policy.get("thresholds_used", {}),
-            memory_rationale=orch.memory_rationale,
+            memory_rationale=memory_rationale,
             flag=_default_flag_for(d),
             tags=policy.get("violated_rules", [])[:3],
         )
     # Backfill any fields the Agent may have omitted, favoring policy as source of truth.
     blob.setdefault("jurisdiction", jurisdiction)
-    blob.setdefault("memory_rationale", orch.memory_rationale)
+    blob.setdefault("memory_rationale", memory_rationale)
     blob.setdefault("execution_mode", policy.get("execution_mode", "code_interpreter"))
     blob.setdefault("thresholds_used", policy.get("thresholds_used", {}))
     blob.setdefault("violated_rules", policy.get("violated_rules", []))
@@ -534,7 +636,7 @@ tags 要求：给 1~4 个细粒度标签（例："色情"/"血腥暴力"/"未成
             thresholds_used=policy.get("thresholds_used", {}),
             violated_rules=policy.get("violated_rules", []),
             escalation_needed=bool(policy.get("escalation_needed", False)),
-            memory_rationale=orch.memory_rationale,
+            memory_rationale=memory_rationale,
             flag=_default_flag_for(d),
             tags=policy.get("violated_rules", [])[:3],
         )

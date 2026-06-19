@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { JurisdictionPicker } from "@/components/JurisdictionPicker";
+import { SamplePicker } from "@/components/SamplePicker";
 import { DecisionBadge } from "@/components/DecisionBadge";
 import { FlagBadge, TagChips } from "@/components/FlagBadge";
 import {
@@ -221,7 +222,30 @@ export function VideoPage() {
             }}
           />
 
+          <SamplePicker
+            kind="video"
+            selectedUri={s3Uri}
+            onPick={(uri) => {
+              // Picking a server-side sample: clear any local-upload preview
+              // state and use the existing S3 object directly (no upload).
+              if (localUrl) URL.revokeObjectURL(localUrl);
+              setLocalUrl(null);
+              setFilename(null);
+              setSizeBytes(null);
+              setDurationS(null);
+              setReport(null);
+              setError(null);
+              setUploadError(null);
+              setS3Uri(uri);
+            }}
+          />
+
           {uploading && <div className="text-xs text-[var(--color-accent)]">Uploading…</div>}
+          {s3Uri && !filename && (
+            <div className="break-all font-mono text-[10px] text-[var(--color-text-muted)]">
+              已选示例：{s3Uri}
+            </div>
+          )}
           {uploadError && <div className="text-xs text-[var(--color-danger)]">{uploadError}</div>}
           {overLimit && (
             <div className="rounded-md border border-[var(--color-danger)]/60 bg-[color-mix(in_oklab,var(--color-danger)_10%,transparent)] p-2 text-[11px] text-[var(--color-danger)]">

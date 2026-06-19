@@ -77,6 +77,7 @@ class UgcModerationDemoStack(Stack):
                 s3.LifecycleRule(
                     id="expire-demo-uploads",
                     enabled=True,
+                    prefix="uploads/",            # 只清临时上传；samples/ 永久保留
                     expiration=Duration.days(7),  # Demo 内容 7 天清掉，不留垃圾
                 )
             ],
@@ -125,7 +126,9 @@ class UgcModerationDemoStack(Stack):
             "BackendImage",
             directory=str(REPO_ROOT),
             platform=ecr_assets.Platform.LINUX_ARM64,
-            file="Dockerfile",
+            # ECS web server uses Dockerfile.web; the root Dockerfile is the
+            # AgentCore Runtime contract (built by CodeBuild for the Runtime).
+            file="Dockerfile.web",
         )
 
         log_group = logs.LogGroup(
@@ -273,12 +276,17 @@ class UgcModerationDemoStack(Stack):
         s3_origin = origins.S3BucketOrigin.with_origin_access_control(site_bucket)
 
         # /api/* 源：internet-facing ALB（HTTP only）
+        # 视频审核是同步接口，处理时间随帧数线性增长（1 帧/秒，90s 视频可达
+        # ~75s+）。CloudFront → 源的 read_timeout 默认 30s 会在视频跑完前切断
+        # 连接返回 504。read_timeout 提到 120s（CloudFront 配额内最大，>120 才
+        # 需提工单）以覆盖视频处理时长。keepalive 只影响连接复用、不影响请求
+        # 超时；此 CDK 版本校验上限 180s，设满即可（AWS API 本身允许到 300s）。
         alb_origin = origins.LoadBalancerV2Origin(
             fargate.load_balancer,
             protocol_policy=cloudfront.OriginProtocolPolicy.HTTP_ONLY,
             http_port=80,
-            read_timeout=Duration.seconds(60),
-            keepalive_timeout=Duration.seconds(60),
+            read_timeout=Duration.seconds(120),
+            keepalive_timeout=Duration.seconds(180),
         )
 
         distribution = cloudfront.Distribution(

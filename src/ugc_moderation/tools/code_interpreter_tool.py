@@ -66,7 +66,13 @@ def get_shared_code_interpreter():
                 ci = CodeInterpreter(settings.aws_region)
                 if settings.code_interpreter_id:
                     ci.identifier = settings.code_interpreter_id
-                ci.start()
+                # Default session_timeout is 900s (15 min); AgentCore reaps the
+                # session after that idle window, so a demo run >15 min after
+                # startup hits a dead session on every frame. Widen to 1h to
+                # cut that failure window (the rebuild-on-stale logic in
+                # _run_in_code_interpreter / ci_call_with_retry still covers
+                # the case where it expires anyway). Configurable via env.
+                ci.start(session_timeout_seconds=settings.ci_session_timeout_seconds)
             _SHARED_CI = ci
             log.info("shared code interpreter session started",
                      extra={"ctx_sid": getattr(ci, "session_id", None)})
@@ -92,16 +98,23 @@ def stop_shared_code_interpreter() -> None:
         _SHARED_CI = None
 
 
-def _reset_shared_code_interpreter() -> None:
+def _reset_shared_code_interpreter(stale=None) -> None:
     """Force-drop the cached session (e.g. after 'session not active' error).
 
     Next get_shared_code_interpreter() call will create a fresh microVM. Caller
     should also reset any per-process latches that depend on the old session
     (e.g. the imageio-ffmpeg install latch in pipeline_video).
+
+    If `stale` is given, only drop the cached session when it is still that
+    exact object. Under concurrent video batches several frames may hit the
+    same dead session at once; this guard stops a late frame from killing a
+    session another frame already rebuilt.
     """
     global _SHARED_CI
     with _SHARED_LOCK:
         old = _SHARED_CI
+        if stale is not None and old is not stale:
+            return                               # already replaced by someone else
         _SHARED_CI = None
     if old is not None:
         try:
@@ -135,7 +148,7 @@ def ci_call_with_retry(method_name: str, *args: Any, **kwargs: Any) -> Any:
             raise
         log.warning("CI session dead; rebuilding and retrying",
                     extra={"ctx_method": method_name, "ctx_err": str(exc)[:160]})
-        _reset_shared_code_interpreter()
+        _reset_shared_code_interpreter(stale=ci)
         # Reset the ffmpeg-install latch so the rebuilt session re-installs it.
         try:
             from .. import pipeline_video
@@ -192,8 +205,30 @@ def _run_in_code_interpreter(wrapper: str) -> dict[str, Any] | None:
                     return None
                 return json.loads(stdout.splitlines()[-1])
         except Exception as exc:                 # noqa: BLE001
-            log.warning("shared CI call failed; retrying with one-shot session",
-                        extra={"ctx_err": str(exc)[:200]})
+            # If the shared session went stale (e.g. AgentCore reaped it after
+            # idle), rebuild it ONCE and retry on the fresh session. Without
+            # this, the dead session stays cached and every subsequent call
+            # (e.g. every video frame) re-fails and pays a one-shot cold start
+            # — turning a fast video into a 504-risking crawl.
+            if _is_session_dead(exc):
+                log.warning("shared CI session stale; rebuilding once",
+                            extra={"ctx_err": str(exc)[:160]})
+                _reset_shared_code_interpreter(stale=ci)
+                ci2 = get_shared_code_interpreter()
+                if ci2 is not None:
+                    try:
+                        with span("tool:code_interpreter.shared.retry"):
+                            resp = ci2.invoke("executeCode", {"language": "python", "code": wrapper})
+                            stdout = _extract_stdout(resp)
+                            if not stdout:
+                                return None
+                            return json.loads(stdout.splitlines()[-1])
+                    except Exception as exc2:    # noqa: BLE001
+                        log.warning("rebuilt CI call failed; falling back to one-shot",
+                                    extra={"ctx_err": str(exc2)[:200]})
+            else:
+                log.warning("shared CI call failed; retrying with one-shot session",
+                            extra={"ctx_err": str(exc)[:200]})
             # Fall through to ephemeral session
 
     # Fallback: ephemeral code_session (cold-start each call)

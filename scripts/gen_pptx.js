@@ -484,13 +484,13 @@ const TOTAL = 17;
 {
   const s = pres.addSlide();
   bg(s);
-  title(s, "Demo 3 · 记忆闭环", "Agent 从「执行工具」到「成长伙伴」");
+  title(s, "Demo 3 · 记忆闭环", "一次误判反馈，下次自动改判 — 但硬红线永不松动");
 
   // timeline: 3 steps horizontal
   const steps = [
-    { title: "1. 上传边缘图",      desc: "判 deny",                       color: C.ACC_RED },
-    { title: "2. 点「标记误判」", desc: "写入 AgentCore Memory",         color: C.ACC_AMB },
-    { title: "3. 再次上传相似图", desc: "召回 1 条历史 · 阈值 75 → 85", color: C.ACC_GRN },
+    { title: "1. 上传健身图",      desc: "Non-Explicit Nudity 96%\n按默认阈值判 deny", color: C.ACC_RED },
+    { title: "2. 点「标记误判」", desc: "运营更正为 allow\n写入 AgentCore Memory", color: C.ACC_AMB },
+    { title: "3. 再次上传相似图", desc: "语义召回历史误判 · 阈值 75 → 85\ndeny → allow 自动改判", color: C.ACC_GRN },
   ];
   steps.forEach((st, i) => {
     const x = 0.6 + i * 4.3, y = 2.1, w = 4.1, h = 2.3;
@@ -515,23 +515,45 @@ const TOTAL = 17;
     }
   });
 
-  // bottom quote card
+  // bottom: two side-by-side cards — left=会学习, right=有底线
+  // left: 记忆改判（会学习）
   s.addShape(pres.shapes.RECTANGLE, {
-    x: 0.6, y: 4.8, w: 12.2, h: 2.0,
-    fill: { color: C.BG_PANEL2 }, line: { color: C.ACC_MAG, width: 2 },
+    x: 0.6, y: 4.8, w: 6.05, h: 2.0,
+    fill: { color: C.BG_PANEL2 }, line: { color: C.ACC_GRN, width: 2 },
   });
-  s.addText("“Agent 自己学会了我们业务的偏好”", {
-    x: 0.85, y: 4.95, w: 11.8, h: 0.7,
-    fontSize: 22, fontFace: CJK, italic: true, bold: true, color: C.ACC_MAG, margin: 0,
+  s.addText("✓ 会学习：记忆驱动改判", {
+    x: 0.85, y: 4.95, w: 5.6, h: 0.5,
+    fontSize: 17, fontFace: CJK, bold: true, color: C.ACC_GRN, margin: 0,
   });
   s.addText([
-    { text: "不是运营手动调全局阈值，而是", options: {} },
+    { text: "不是手动调全局阈值，而是", options: {} },
     { text: "按内容语义粒度自适应", options: { bold: true, color: C.TEXT } },
-    { text: "。一次标注 → 永久受益 → 全租户隔离。", options: { breakLine: true } },
-    { text: "这是 AI 从「执行工具」到「成长伙伴」的范式跃迁。", options: { italic: true, color: C.TEXT_DIM } },
+    { text: "。", options: { breakLine: true } },
+    { text: "误判 → allow，漏判 → 转人审；", options: { breakLine: true } },
+    { text: "一次标注 → 永久受益 → 全租户隔离。", options: {} },
   ], {
-    x: 0.85, y: 5.7, w: 11.8, h: 1.0,
-    fontSize: 14, fontFace: CJK, color: C.TEXT_DIM, margin: 0,
+    x: 0.85, y: 5.5, w: 5.6, h: 1.2,
+    fontSize: 13, fontFace: CJK, color: C.TEXT_DIM, margin: 0,
+  });
+
+  // right: 硬红线保护（有底线）
+  s.addShape(pres.shapes.RECTANGLE, {
+    x: 6.75, y: 4.8, w: 6.05, h: 2.0,
+    fill: { color: C.BG_PANEL2 }, line: { color: C.ACC_RED, width: 2 },
+  });
+  s.addText("✓ 有底线：硬红线永不松动", {
+    x: 7.0, y: 4.95, w: 5.6, h: 0.5,
+    fontSize: 17, fontFace: CJK, bold: true, color: C.ACC_RED, margin: 0,
+  });
+  s.addText([
+    { text: "记忆只放宽", options: {} },
+    { text: "边缘标签", options: { bold: true, color: C.TEXT } },
+    { text: "（性暗示 / 非露骨 / 泳装）。", options: { breakLine: true } },
+    { text: "色情 / 血腥 / 仇恨符号 / 涉政关键词", options: { bold: true, color: C.ACC_RED, breakLine: true } },
+    { text: "命中即拒，记忆无权翻转 → 合规可审计。", options: {} },
+  ], {
+    x: 7.0, y: 5.5, w: 5.6, h: 1.2,
+    fontSize: 13, fontFace: CJK, color: C.TEXT_DIM, margin: 0,
   });
 
   footer(s); pageNum(s, 8, TOTAL);

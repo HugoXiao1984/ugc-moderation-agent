@@ -97,6 +97,13 @@ export interface MemoryRecord {
   created_at: string;
 }
 
+export interface Sample {
+  s3_uri: string;
+  label: string;
+  kind: "image" | "video";
+  scenario: string;
+}
+
 export interface FrameResult {
   second: number;
   s3_uri: string;

@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { JurisdictionPicker } from "@/components/JurisdictionPicker";
 import { Uploader } from "@/components/Uploader";
+import { SamplePicker } from "@/components/SamplePicker";
 import { ReportView } from "@/components/ReportView";
 import { markMisjudgment, moderate, moderateReplay, recentMemory } from "@/lib/api";
 import type { Jurisdiction, MemoryRecord, ModerationReport } from "@/lib/types";
@@ -99,6 +100,7 @@ export function MemoryPage() {
           <CardContent className="space-y-3">
             <JurisdictionPicker value={jurisdiction} onChange={setJurisdiction} />
             <Uploader onUploaded={(uri) => setS3Uri(uri)} keyPrefix="mem" />
+            <SamplePicker kind="image" selectedUri={s3Uri} onPick={setS3Uri} />
             <div className="flex flex-wrap gap-2">
               <Button onClick={run} disabled={!s3Uri || busy} size="md">
                 {busy && lastMode !== "replay" ? "Running…" : "1. Run moderation"}

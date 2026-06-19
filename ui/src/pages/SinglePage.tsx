@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { JurisdictionPicker } from "@/components/JurisdictionPicker";
 import { Uploader } from "@/components/Uploader";
+import { SamplePicker } from "@/components/SamplePicker";
 import { ReportView } from "@/components/ReportView";
 import { TraceChart } from "@/components/TraceChart";
 import { latestTrace, markMisjudgment, moderate } from "@/lib/api";
@@ -78,6 +79,7 @@ export function SinglePage() {
                 Image
               </label>
               <Uploader onUploaded={(uri) => setS3Uri(uri)} keyPrefix="single" />
+              <SamplePicker kind="image" selectedUri={s3Uri} onPick={setS3Uri} className="mt-3" />
               {s3Uri && (
                 <div className="mt-2 break-all font-mono text-[10px] text-[var(--color-text-muted)]">{s3Uri}</div>
               )}

@@ -133,5 +133,9 @@ def run_moderation_sync(**kwargs) -> ModerationReport:
     return asyncio.run(run_moderation(**kwargs))
 
 
-def report_to_dict(report: ModerationReport) -> dict[str, Any]:
+def report_to_dict(report: ModerationReport | dict[str, Any]) -> dict[str, Any]:
+    # Idempotent on dicts: the remote AgentCore Runtime path already returns a
+    # report dict, so callers can pass either a ModerationReport or that dict.
+    if isinstance(report, dict):
+        return report
     return json.loads(report.model_dump_json())

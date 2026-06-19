@@ -41,6 +41,10 @@ class Settings:
     guardrail_id: str | None = None
     guardrail_version: str = "DRAFT"
     code_interpreter_id: str | None = None
+    # AgentCore reaps an idle Code Interpreter session after this window
+    # (SDK default 900s). Widen so demo runs spaced apart don't hit a dead
+    # session on the first call. Tune via CI_SESSION_TIMEOUT_SECONDS.
+    ci_session_timeout_seconds: int = 3600
     demo_tenant_id: str = "demo-tenant"
     demo_bucket: str = "ugc-moderation-demo"
     default_confidence_threshold: float = 75.0
@@ -90,6 +94,7 @@ def get_settings() -> Settings:
         guardrail_id=os.getenv("GUARDRAIL_ID") or None,
         guardrail_version=os.getenv("GUARDRAIL_VERSION", "DRAFT"),
         code_interpreter_id=os.getenv("CODE_INTERPRETER_ID") or None,
+        ci_session_timeout_seconds=int(os.getenv("CI_SESSION_TIMEOUT_SECONDS", "3600")),
         demo_tenant_id=os.getenv("DEMO_TENANT_ID", "demo-tenant"),
         demo_bucket=os.getenv("DEMO_BUCKET", "ugc-moderation-demo"),
         default_confidence_threshold=float(os.getenv("DEFAULT_CONFIDENCE_THRESHOLD", "75")),

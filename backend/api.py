@@ -37,6 +37,9 @@ from ugc_moderation.pipeline_video import (  # noqa: E402
     report_to_dict as _video_report_to_dict,
 )
 from ugc_moderation.settings import DEFAULT_AGENT_MODELS, get_settings  # noqa: E402
+from ugc_moderation.util.logging import get_logger  # noqa: E402
+
+log = get_logger("backend.api")
 from ugc_moderation.tools.code_interpreter_tool import (  # noqa: E402
     get_shared_code_interpreter,
     stop_shared_code_interpreter,
@@ -44,7 +47,14 @@ from ugc_moderation.tools.code_interpreter_tool import (  # noqa: E402
 
 
 async def run_moderation(**kwargs):
-    """Dispatch to the pipeline selected by PIPELINE_MODE (agent | hybrid)."""
+    """Run the moderation pipeline in-process on this ECS task.
+
+    The pipeline itself decides whether to offload a single stage (the Sonnet
+    decision synthesis) to AgentCore Runtime — see _run_decision_heavy_agent in
+    pipeline_hybrid.py. We do NOT route the whole pipeline remotely: that was
+    slow (~75s in a microVM) and all-or-nothing. Keeping the bulk local means
+    the demo stays fast while exactly one agent genuinely runs in the Runtime.
+    """
     mode = (get_settings().pipeline_mode or "agent").lower()
     if mode == "hybrid":
         return await _run_hybrid(**kwargs)
@@ -303,6 +313,53 @@ def misjudgment(req: MisjudgmentRequest) -> dict[str, Any]:
         signals_summary=req.summary,
         jurisdiction=req.jurisdiction,
     )
+
+
+# Curated demo samples pre-uploaded to s3://<demo_bucket>/samples/. The UI
+# offers these as one-click picks so a live demo never waits on (or fails at)
+# uploading over a flaky venue network. Order = display order.
+_SAMPLES: list[dict[str, str]] = [
+    {"key": "samples/bodybuilder.jpg",     "label": "健身举重", "kind": "image",
+     "scenario": "边缘内容 · 记忆可改判 deny→allow"},
+    {"key": "samples/swimwear-edge.png",   "label": "泳装边缘", "kind": "image",
+     "scenario": "非露骨/泳装 · 记忆可改判 deny→allow"},
+    {"key": "samples/yoga.jpg",            "label": "瑜伽",     "kind": "image",
+     "scenario": "合规基线 · allow"},
+    {"key": "samples/gym.jpg",             "label": "健身房",   "kind": "image",
+     "scenario": "合规基线 · allow"},
+    {"key": "samples/baseline.png",        "label": "普通图",   "kind": "image",
+     "scenario": "合规基线 · allow"},
+    {"key": "samples/adult-content.png",   "label": "成人内容", "kind": "image",
+     "scenario": "硬红线 · 记忆不可翻 · deny"},
+    {"key": "samples/explicit-nudity.png", "label": "露骨色情", "kind": "image",
+     "scenario": "硬红线 · Explicit Nudity · deny"},
+    {"key": "samples/graphic-violence.jpg", "label": "血腥暴力", "kind": "image",
+     "scenario": "硬红线 · Graphic Violence · deny"},
+    {"key": "samples/short-video.mp4",     "label": "短视频",   "kind": "video",
+     "scenario": "逐帧审核 · 命中即短路"},
+]
+
+
+@app.get("/api/samples")
+def samples() -> dict[str, Any]:
+    """List pre-uploaded demo samples as ready-to-use S3 URIs.
+
+    The UI uses these to skip the upload step entirely — picking a sample just
+    sets the same content_s3_uri the upload flow would have produced, so all
+    downstream moderation logic is unchanged.
+    """
+    bucket = get_settings().demo_bucket
+    return {
+        "samples": [
+            {
+                "s3_uri": f"s3://{bucket}/{s['key']}",
+                "label": s["label"],
+                "kind": s["kind"],
+                "scenario": s["scenario"],
+            }
+            for s in _SAMPLES
+        ]
+    }
 
 
 @app.get("/api/memory/recent")

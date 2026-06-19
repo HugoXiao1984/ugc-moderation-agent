@@ -4,6 +4,7 @@ import type {
   MetaInfo,
   TraceResult,
   MemoryRecord,
+  Sample,
   VideoModerationReport,
   VideoLimits,
   VideoProgress,
@@ -100,6 +101,10 @@ export async function markMisjudgment(body: {
 
 export async function recentMemory(limit = 20): Promise<{ records: MemoryRecord[] }> {
   return jsonOrThrow(await fetch(`${BASE}/api/memory/recent?limit=${limit}`));
+}
+
+export async function fetchSamples(): Promise<{ samples: Sample[] }> {
+  return jsonOrThrow(await fetch(`${BASE}/api/samples`));
 }
 
 export async function latestTrace(caseId?: string): Promise<TraceResult> {
