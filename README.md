@@ -19,7 +19,7 @@
 | **自适应法域策略** | AgentCore Code Interpreter 热执行 `cn/eu/us.py`，改规则不改 Agent 代码 |
 | **四层漏斗自动编排** | Strands Graph + 条件边（显式决策路径，可视化、可解释） |
 | **记忆驱动优化** | AgentCore Memory 记录误判反馈，Orchestrator 入口召回相似案例，动态调整阈值 |
-| **模型分级 + 动态升降** | orchestrator/fast_screen/text_guard/deep_review/decision_light = **Haiku 4.5**（快+便宜），decision_heavy = **Sonnet 4.6**（中文理由深度推理）；按 `prior_risk` 自动分流。实测 48s → 31.5s (-35%) |
+| **模型分级 + 动态升降** | orchestrator/fast_screen/text_guard/deep_review/decision_light = **Haiku 4.5**（快+便宜），decision_heavy = **Sonnet 4.6**（中文理由深度推理）；按 `prior_risk` 自动分流。 |
 | **microVM 隔离** | AgentCore Runtime 每会话独立 Firecracker microVM，合规可审计 |
 
 ## 快速开始
